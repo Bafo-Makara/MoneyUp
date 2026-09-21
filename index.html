@@ -132,12 +132,13 @@ body{
 
 .field{margin-bottom:18px}
 .field label{ display:block; font-size:.72rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-bottom:7px; }
-.field input{
+.field input, .field select{
   width:100%; border:none; border-bottom:1.5px solid var(--line); background:transparent;
   padding:8px 2px; font-size:1.02rem; font-family:inherit; color:var(--ink); letter-spacing:.02em;
   outline:none; transition:border-color .2s ease;
 }
-.field input:focus{border-color:var(--accent)}
+.field select{ appearance:none; -webkit-appearance:none; cursor:pointer; }
+.field input:focus, .field select:focus{border-color:var(--accent)}
 .field input::placeholder{color:#b6b2a8}
 
 .btn{
@@ -181,7 +182,7 @@ body{
 }
 .dash-head h2{ font-size:1.5rem; font-weight:400; letter-spacing:.03em; }
 .dash-head h2 span{color:var(--accent)}
-.dash-actions{display:flex; gap:8px}
+.dash-actions{display:flex; gap:8px; flex-wrap:wrap}
 .iconbtn{
   background:rgba(255,255,255,.6);
   border:1px solid var(--line);
@@ -352,6 +353,7 @@ body{
     <div class="dash-head">
       <h2>Hey, <span id="dashName"></span></h2>
       <div class="dash-actions">
+        <button class="iconbtn" id="currencyBtn">Currency</button>
         <button class="iconbtn" id="addCatBtn">+ Category</button>
         <button class="iconbtn" id="logoutBtn">Log out</button>
       </div>
@@ -412,6 +414,21 @@ body{
   </div>
 </div>
 
+<!-- CURRENCY MODAL -->
+<div class="overlay" id="currencyOverlay">
+  <div class="modal">
+    <h3>Choose your currency</h3>
+    <div class="field">
+      <label for="currencySelect">Currency</label>
+      <select id="currencySelect"></select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="currencyCancelBtn">Cancel</button>
+      <button class="btn accent" id="currencySaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ---------------- SPLASH ---------------- */
 const hasSession = !!localStorage.getItem("moneyup_session");
@@ -428,6 +445,23 @@ window.addEventListener("load", () => {
     }, { once: true });
   }, SPLASH_MS);
 });
+
+/* ---------------- CURRENCIES ---------------- */
+const CURRENCIES = {
+  USD: { symbol: "$",   label: "US Dollar" },
+  EUR: { symbol: "€",   label: "Euro" },
+  GBP: { symbol: "£",   label: "British Pound" },
+  CNY: { symbol: "¥",   label: "Chinese Yuan" },
+  ZAR: { symbol: "R",   label: "South African Rand" },
+  LSL: { symbol: "L",   label: "Lesotho Loti" },
+  NGN: { symbol: "₦",   label: "Nigerian Naira" },
+  KES: { symbol: "KSh", label: "Kenyan Shilling" },
+  INR: { symbol: "₹",   label: "Indian Rupee" },
+  JPY: { symbol: "¥",   label: "Japanese Yen" },
+  AUD: { symbol: "A$",  label: "Australian Dollar" },
+  CAD: { symbol: "C$",  label: "Canadian Dollar" }
+};
+const DEFAULT_CURRENCY = "USD";
 
 /* ---------------- STORAGE HELPERS ---------------- */
 function getUsers(){
@@ -464,8 +498,11 @@ function formatId(id){
   return id.replace(/(\d{3})(\d{3})(\d{3})/, "$1 $2 $3");
 }
 function fmtMoney(n){
+  const user = currentUser();
+  const code = (user && user.currency && CURRENCIES[user.currency]) ? user.currency : DEFAULT_CURRENCY;
+  const symbol = CURRENCIES[code].symbol;
   const sign = n < 0 ? "-" : "";
-  return sign + "$" + Math.abs(n).toFixed(2).replace(/\.00$/, "");
+  return sign + symbol + Math.abs(n).toFixed(2).replace(/\.00$/, "");
 }
 function defaultCategories(){
   return {
@@ -525,7 +562,7 @@ function handleCreate(){
 
   const users = getUsers();
   const id = generateId(users);
-  users[id] = { name, createdAt: Date.now(), categories: defaultCategories(), history: [] };
+  users[id] = { name, createdAt: Date.now(), currency: DEFAULT_CURRENCY, categories: defaultCategories(), history: [] };
   saveUsers(users);
   localStorage.setItem("moneyup_session", id);
 
@@ -569,6 +606,12 @@ let spendingCatId = null;
 function showDashboard(){
   document.getElementById("authCard").style.display = "none";
   document.getElementById("dashCard").style.display = "block";
+
+  // migrate accounts created before currency support existed
+  updateCurrentUser(user => {
+    if (!user.currency || !CURRENCIES[user.currency]) user.currency = DEFAULT_CURRENCY;
+  });
+
   wireDashboard();
   renderDashboard();
 }
@@ -591,6 +634,11 @@ function wireDashboard(){
   document.getElementById("spendCancelBtn").addEventListener("click", closeSpendModal);
   document.getElementById("spendSaveBtn").addEventListener("click", saveSpend);
   document.getElementById("spendOverlay").addEventListener("click", e => { if (e.target.id === "spendOverlay") closeSpendModal(); });
+
+  document.getElementById("currencyBtn").addEventListener("click", openCurrencyModal);
+  document.getElementById("currencyCancelBtn").addEventListener("click", closeCurrencyModal);
+  document.getElementById("currencySaveBtn").addEventListener("click", saveCurrencyModal);
+  document.getElementById("currencyOverlay").addEventListener("click", e => { if (e.target.id === "currencyOverlay") closeCurrencyModal(); });
 }
 
 /* ---- HP-style bar: starts full, depletes as you spend ---- */
@@ -739,6 +787,30 @@ function saveSpend(){
   });
 
   closeSpendModal();
+  renderDashboard();
+}
+
+/* ---- currency modal ---- */
+function openCurrencyModal(){
+  const select = document.getElementById("currencySelect");
+  const user = currentUser();
+  select.innerHTML = "";
+  Object.keys(CURRENCIES).forEach(code => {
+    const opt = document.createElement("option");
+    opt.value = code;
+    opt.textContent = code + " — " + CURRENCIES[code].label + " (" + CURRENCIES[code].symbol + ")";
+    select.appendChild(opt);
+  });
+  select.value = (user && user.currency) || DEFAULT_CURRENCY;
+  document.getElementById("currencyOverlay").classList.add("show");
+}
+function closeCurrencyModal(){
+  document.getElementById("currencyOverlay").classList.remove("show");
+}
+function saveCurrencyModal(){
+  const code = document.getElementById("currencySelect").value;
+  updateCurrentUser(user => { user.currency = code; });
+  closeCurrencyModal();
   renderDashboard();
 }
 </script>
